@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="routezero.png" alt="RouteZero" width="200">
+  <img src="routezero-light.png" alt="RouteZero" width="200">
 </p>
 
 # RouteZero
