@@ -30,7 +30,9 @@ export default function BatchTestPage() {
     { id: "auto:researching", label: "Auto (Researching)" },
   ];
 
-  const modelOptions = allModels.filter((m: any) => m.enabled);
+  const modelOptions = allModels.filter(
+    (m: any) => m.enabled && m.keyCount > 0,
+  );
 
   function toggleModel(id: string) {
     setSelectedModels((prev) =>

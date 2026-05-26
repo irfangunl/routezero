@@ -70,6 +70,7 @@ export default function ModelsPage() {
   const [search, setSearch] = useState("");
   const [platform, setPlatform] = useState("");
   const [sort, setSort] = useState<SortKey>("intelligenceRank");
+  const [showAll, setShowAll] = useState(false);
 
   const { data: models = [] } = useQuery<any[]>({
     queryKey: ["models-catalog"],
@@ -79,6 +80,7 @@ export default function ModelsPage() {
   const platforms = [...new Set(models.map((m) => m.platform))].sort();
 
   const filtered = models
+    .filter((m) => showAll || m.keyCount > 0)
     .filter((m) => !platform || m.platform === platform)
     .filter(
       (m) =>
@@ -130,6 +132,15 @@ export default function ModelsPage() {
           <option value="speedRank">Sort: Speed</option>
           <option value="contextWindow">Sort: Context</option>
         </Select>
+        <label className="flex items-center gap-1.5 text-xs text-muted-fg cursor-pointer">
+          <input
+            type="checkbox"
+            checked={showAll}
+            onChange={(e) => setShowAll(e.target.checked)}
+            className="accent-fg"
+          />
+          Show all models
+        </label>
       </div>
 
       {/* Auto-mode models */}
