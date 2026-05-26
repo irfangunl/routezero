@@ -144,10 +144,6 @@ curl http://localhost:3001/v1/embeddings \
 - **Server**: Express 5 + better-sqlite3
 - **Routing**: In-memory round-robin per platform + dynamic priority penalties on 429
 
-## Projects Using RouteZero
-
-- [Hermes Desktop](https://github.com/irfangunl/hermes-desktop) — standalone desktop client
-
 ## Terms of Service & Provider Compliance
 
 RouteZero is a self-hosted, single-user, personal-use proxy. Each upstream provider has its own terms, summarized below (reviewed May 2026). This is informational, not legal advice.
@@ -180,4 +176,4 @@ RouteZero is a rework of [FreeLLMAPI](https://github.com/tashfeenahmed/freellmap
 
 ## License
 
-[MIT](LICENSE) © 2026 Irfan Günlü — based on original work © 2026 Tashfeen Ahmed
+[MIT](LICENSE) © 2026 M. İrfan Günel — based on original work © 2026 Tashfeen Ahmed
