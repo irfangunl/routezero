@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="routezero.png" alt="RouteZero" width="200">
+</p>
+
 # RouteZero
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
