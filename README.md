@@ -31,9 +31,8 @@ This is a rework and extension of [FreeLLMAPI](https://github.com/tashfeenahmed/
 # Install dependencies
 npm install
 
-# Generate an encryption key and add it to .env
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-# Copy .env.example to .env and set ENCRYPTION_KEY
+# Copy config (encryption key auto-generates in dev mode)
+cp .env.example .env
 
 # Build
 npm run build
@@ -46,13 +45,14 @@ Open `http://localhost:5173` for the dashboard. The API listens on `http://local
 
 ## Environment
 
-| Variable             | Default | Description                                       |
-| -------------------- | ------- | ------------------------------------------------- |
-| `ENCRYPTION_KEY`     | —       | 64-char hex key for API key encryption (required) |
-| `PORT`               | `3001`  | Server port                                       |
-| `DASHBOARD_ORIGINS`  | —       | Extra CORS origins for the dashboard              |
-| `LOG_RETENTION_DAYS` | `30`    | Days to keep request logs                         |
-| `WEBHOOK_URL`        | —       | POST URL for key expiry / 429 spike notifications |
+| Variable             | Default | Description                                               |
+| -------------------- | ------- | --------------------------------------------------------- |
+| `DEV_MODE`           | `false` | Auto-generates encryption key if `ENCRYPTION_KEY` not set |
+| `ENCRYPTION_KEY`     | —       | 64-char hex key for API key encryption (required in prod) |
+| `PORT`               | `3001`  | Server port                                               |
+| `DASHBOARD_ORIGINS`  | —       | Extra CORS origins for the dashboard                      |
+| `LOG_RETENTION_DAYS` | `30`    | Days to keep request logs                                 |
+| `WEBHOOK_URL`        | —       | POST URL for key expiry / 429 spike notifications         |
 
 ## Adding API Keys
 

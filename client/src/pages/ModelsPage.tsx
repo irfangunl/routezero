@@ -32,12 +32,39 @@ const PLATFORM_NAMES: Record<string, string> = {
   opencode: "OpenCode",
 };
 
+const AUTO_MODELS = [
+  { id: "auto", label: "Auto (General)", desc: "Best all-around model" },
+  { id: "auto:coding", label: "Auto (Coding)", desc: "Best for coding tasks" },
+  {
+    id: "auto:researching",
+    label: "Auto (Research)",
+    desc: "Best for research/reasoning",
+  },
+];
+
 type SortKey =
   | "intelligenceRank"
   | "codingRank"
   | "researchRank"
   | "speedRank"
   | "contextWindow";
+
+function CopyBtn({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+      }}
+      className="text-xs font-mono px-1.5 py-0.5 rounded border border-border bg-surface hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
+      title="Copy model ID"
+    >
+      {copied ? "Copied!" : text}
+    </button>
+  );
+}
 
 export default function ModelsPage() {
   const [search, setSearch] = useState("");
@@ -68,7 +95,7 @@ export default function ModelsPage() {
           <h1 className="text-base font-semibold">Model Catalog</h1>
           <p className="text-sm text-muted-fg mt-0.5">
             All {models.length} catalog models with benchmark ranks and
-            capabilities.
+            capabilities. Click a model ID to copy.
           </p>
         </div>
       </div>
@@ -105,12 +132,26 @@ export default function ModelsPage() {
         </Select>
       </div>
 
-      <div className="max-h-[calc(100vh-220px)] overflow-y-auto border border-border">
+      {/* Auto-mode models */}
+      <div className="mb-3 p-3 border border-border rounded bg-surface">
+        <p className="text-xs font-medium text-muted-fg mb-2">Auto modes</p>
+        <div className="flex flex-wrap gap-2">
+          {AUTO_MODELS.map((a) => (
+            <div key={a.id} className="flex items-center gap-2 text-sm">
+              <CopyBtn text={a.id} />
+              <span className="text-xs text-muted-fg">{a.desc}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="max-h-[calc(100vh-300px)] overflow-y-auto border border-border">
         <Table>
           <TableHeader className="sticky top-0 bg-bg z-10">
             <TableRow>
               <TableHead className="pl-1">Model</TableHead>
               <TableHead>Provider</TableHead>
+              <TableHead>Model ID</TableHead>
               <TableHead className="text-right">Intel</TableHead>
               <TableHead className="text-right">Code</TableHead>
               <TableHead className="text-right">Research</TableHead>
@@ -128,6 +169,9 @@ export default function ModelsPage() {
                 </TableCell>
                 <TableCell className="text-xs text-muted-fg">
                   {PLATFORM_NAMES[m.platform] ?? m.platform}
+                </TableCell>
+                <TableCell>
+                  <CopyBtn text={m.modelId} />
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-xs">
                   {m.intelligenceRank ?? "—"}
