@@ -1,14 +1,16 @@
-import { getDb } from '../db/index.js';
-import { getProvider } from '../providers/index.js';
-import { decrypt } from '../lib/crypto.js';
-import { canMakeRequest, canUseTokens, isOnCooldown } from './ratelimit.js';
-import type { BaseProvider } from '../providers/base.js';
+import { getDb } from "../db/index.js";
+import { getProvider } from "../providers/index.js";
+import { decrypt } from "../lib/crypto.js";
+import { canMakeRequest, canUseTokens, isOnCooldown } from "./ratelimit.js";
+import { rankCoalesceExpr } from "../providers/ranks.js";
+import type { BaseProvider } from "../providers/base.js";
 
 interface ModelRow {
   id: number;
   platform: string;
   model_id: string;
   display_name: string;
+  capabilities: string;
   rpm_limit: number | null;
   rpd_limit: number | null;
   tpm_limit: number | null;
@@ -46,13 +48,16 @@ const roundRobinIndex = new Map<string, number>();
 
 // ── Dynamic priority: track 429s per model and demote accordingly ──
 // Key: model_db_id → { count, lastHit, penalty }
-const rateLimitPenalties = new Map<number, { count: number; lastHit: number; penalty: number }>();
+const rateLimitPenalties = new Map<
+  number,
+  { count: number; lastHit: number; penalty: number }
+>();
 
 // Penalty decays over time so models recover
-const PENALTY_PER_429 = 3;        // each 429 adds this many priority positions
-const MAX_PENALTY = 10;            // cap so a model doesn't sink forever
+const PENALTY_PER_429 = 3; // each 429 adds this many priority positions
+const MAX_PENALTY = 10; // cap so a model doesn't sink forever
 const DECAY_INTERVAL_MS = 2 * 60 * 1000; // penalty decays every 2 minutes
-const DECAY_AMOUNT = 1;            // remove this much penalty per decay interval
+const DECAY_AMOUNT = 1; // remove this much penalty per decay interval
 
 /**
  * Record a 429 for a model — increases its penalty so it sinks in priority.
@@ -63,9 +68,16 @@ export function recordRateLimitHit(modelDbId: number) {
   if (existing) {
     existing.count++;
     existing.lastHit = now;
-    existing.penalty = Math.min(existing.penalty + PENALTY_PER_429, MAX_PENALTY);
+    existing.penalty = Math.min(
+      existing.penalty + PENALTY_PER_429,
+      MAX_PENALTY,
+    );
   } else {
-    rateLimitPenalties.set(modelDbId, { count: 1, lastHit: now, penalty: PENALTY_PER_429 });
+    rateLimitPenalties.set(modelDbId, {
+      count: 1,
+      lastHit: now,
+      penalty: PENALTY_PER_429,
+    });
   }
 }
 
@@ -94,7 +106,7 @@ function getPenalty(modelDbId: number): number {
   const elapsed = now - entry.lastHit;
   const decaySteps = Math.floor(elapsed / DECAY_INTERVAL_MS);
   if (decaySteps > 0) {
-    entry.penalty = Math.max(0, entry.penalty - (decaySteps * DECAY_AMOUNT));
+    entry.penalty = Math.max(0, entry.penalty - decaySteps * DECAY_AMOUNT);
     entry.lastHit = now; // reset so we don't double-decay
     if (entry.penalty === 0) {
       rateLimitPenalties.delete(modelDbId);
@@ -108,8 +120,13 @@ function getPenalty(modelDbId: number): number {
 /**
  * Get current penalties for all models (for the API/dashboard).
  */
-export function getAllPenalties(): Array<{ modelDbId: number; count: number; penalty: number }> {
-  const result: Array<{ modelDbId: number; count: number; penalty: number }> = [];
+export function getAllPenalties(): Array<{
+  modelDbId: number;
+  count: number;
+  penalty: number;
+}> {
+  const result: Array<{ modelDbId: number; count: number; penalty: number }> =
+    [];
   for (const [modelDbId, entry] of rateLimitPenalties) {
     const penalty = getPenalty(modelDbId);
     if (penalty > 0) {
@@ -131,25 +148,61 @@ export function getAllPenalties(): Array<{ modelDbId: number; count: number; pen
  * @param skipKeys - set of "platform:modelId:keyId" to skip (failed on this request)
  * @param preferredModelDbId - try this model first (sticky session)
  */
-export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, preferredModelDbId?: number): RouteResult {
+export function routeRequest(
+  estimatedTokens = 1000,
+  skipKeys?: Set<string>,
+  preferredModelDbId?: number,
+  autoMode?: "coding" | "researching",
+  requiredCapability?: string,
+): RouteResult {
   const db = getDb();
 
-  // Get fallback chain ordered by priority
-  const fallbackChain = db.prepare(`
-    SELECT fc.model_db_id, fc.priority, fc.enabled
-    FROM fallback_config fc
-    ORDER BY fc.priority ASC
-  `).all() as FallbackRow[];
+  // Get fallback chain — sorted by fc.priority normally, or by benchmark
+  // rank column when autoMode is set.
+  let fallbackChain: FallbackRow[];
+  if (autoMode) {
+    const ORDER_CLAUSES: Record<string, string> = {
+      coding: `${rankCoalesceExpr("m.coding_rank", "coding")} ASC, fc.priority ASC`,
+      researching: `${rankCoalesceExpr("m.research_rank", "research")} ASC, fc.priority ASC`,
+    };
+    fallbackChain = db
+      .prepare(
+        `
+      SELECT fc.model_db_id, fc.priority, fc.enabled
+      FROM fallback_config fc
+      JOIN models m ON m.id = fc.model_db_id
+      ORDER BY ${ORDER_CLAUSES[autoMode]}
+    `,
+      )
+      .all() as FallbackRow[];
+  } else {
+    fallbackChain = db
+      .prepare(
+        `
+      SELECT fc.model_db_id, fc.priority, fc.enabled
+      FROM fallback_config fc
+      ORDER BY fc.priority ASC
+    `,
+      )
+      .all() as FallbackRow[];
+  }
 
-  // Apply dynamic penalties: sort by (base priority + penalty)
-  const sortedChain = fallbackChain.map(entry => ({
-    ...entry,
-    effectivePriority: entry.priority + getPenalty(entry.model_db_id),
-  })).sort((a, b) => a.effectivePriority - b.effectivePriority);
+  // Apply dynamic penalties: sort by (base priority + penalty).
+  // For auto modes, use array index as base priority (the rank sort
+  // determines position, then penalties adjust within that order).
+  const sortedChain = fallbackChain
+    .map((entry, index) => ({
+      ...entry,
+      effectivePriority:
+        (autoMode ? index : entry.priority) + getPenalty(entry.model_db_id),
+    }))
+    .sort((a, b) => a.effectivePriority - b.effectivePriority);
 
   // Sticky session: move preferred model to front of chain
   if (preferredModelDbId) {
-    const idx = sortedChain.findIndex(e => e.model_db_id === preferredModelDbId);
+    const idx = sortedChain.findIndex(
+      (e) => e.model_db_id === preferredModelDbId,
+    );
     if (idx > 0) {
       const [preferred] = sortedChain.splice(idx, 1);
       sortedChain.unshift(preferred);
@@ -160,17 +213,29 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
     if (!entry.enabled) continue;
 
     // Get model details
-    const model = db.prepare('SELECT * FROM models WHERE id = ? AND enabled = 1').get(entry.model_db_id) as ModelRow | undefined;
+    const model = db
+      .prepare("SELECT * FROM models WHERE id = ? AND enabled = 1")
+      .get(entry.model_db_id) as ModelRow | undefined;
     if (!model) continue;
 
     // Check if we have a provider for this platform
     const provider = getProvider(model.platform as any);
     if (!provider) continue;
 
+    // Check capability filter
+    if (
+      requiredCapability &&
+      !model.capabilities.includes(requiredCapability) &&
+      !provider.supportsCapability(requiredCapability)
+    )
+      continue;
+
     // Get enabled keys that have not already failed validation or decryption.
-    const keys = db.prepare(
-      "SELECT * FROM api_keys WHERE platform = ? AND enabled = 1 AND status IN ('healthy', 'unknown')"
-    ).all(model.platform) as KeyRow[];
+    const keys = db
+      .prepare(
+        "SELECT * FROM api_keys WHERE platform = ? AND enabled = 1 AND status IN ('healthy', 'unknown')",
+      )
+      .all(model.platform) as KeyRow[];
 
     if (keys.length === 0) continue;
 
@@ -196,15 +261,26 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
       // Check cooldown (from previous 429s)
       if (isOnCooldown(model.platform, model.model_id, key.id)) continue;
 
-      if (!canMakeRequest(model.platform, model.model_id, key.id, limits)) continue;
-      if (!canUseTokens(model.platform, model.model_id, key.id, estimatedTokens, limits)) continue;
+      if (!canMakeRequest(model.platform, model.model_id, key.id, limits))
+        continue;
+      if (
+        !canUseTokens(
+          model.platform,
+          model.model_id,
+          key.id,
+          estimatedTokens,
+          limits,
+        )
+      )
+        continue;
 
       let decryptedKey: string;
       try {
         decryptedKey = decrypt(key.encrypted_key, key.iv, key.auth_tag);
       } catch {
-        db.prepare("UPDATE api_keys SET status = 'error', last_checked_at = datetime('now') WHERE id = ?")
-          .run(key.id);
+        db.prepare(
+          "UPDATE api_keys SET status = 'error', last_checked_at = datetime('now') WHERE id = ?",
+        ).run(key.id);
         continue;
       }
 
@@ -224,13 +300,111 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
     // If we reach here, this specific model has NO available keys.
     // Update round-robin index even if we failed so we don't get stuck.
     roundRobinIndex.set(rrKey, idx);
-    
-    // We don't explicitly penalize the model here because the fact that we 
-    // couldn't find a key means we will naturally move to the next model 
+
+    // We don't explicitly penalize the model here because the fact that we
+    // couldn't find a key means we will naturally move to the next model
     // in the `sortedChain` for THIS specific request.
   }
 
-  const err = new Error('All models exhausted. Add more API keys or wait for rate limits to reset.') as any;
+  const err = new Error(
+    "All models exhausted. Add more API keys or wait for rate limits to reset.",
+  ) as any;
   err.status = 429;
+  throw err;
+}
+
+/**
+ * Route a non-chat request (image gen, embeddings) to the best available model
+ * with the required capability. Looks up models directly from DB by capability
+ * flag, bypassing the fallback config used for chat completions.
+ */
+export function routeForCapability(
+  capability: string,
+  preferredModelId?: string,
+): RouteResult {
+  const db = getDb();
+
+  // Specific model requested — look it up directly
+  if (preferredModelId && preferredModelId !== "auto") {
+    const model = db
+      .prepare(
+        "SELECT * FROM models WHERE model_id = ? AND enabled = 1 AND capabilities LIKE ?",
+      )
+      .get(preferredModelId, `%${capability}%`) as ModelRow | undefined;
+    if (model) {
+      const provider = getProvider(model.platform as any);
+      if (provider && provider.supportsCapability(capability)) {
+        const keys = db
+          .prepare(
+            "SELECT * FROM api_keys WHERE platform = ? AND enabled = 1 AND status IN ('healthy', 'unknown')",
+          )
+          .all(model.platform) as KeyRow[];
+        for (const key of keys) {
+          try {
+            const decryptedKey = decrypt(
+              key.encrypted_key,
+              key.iv,
+              key.auth_tag,
+            );
+            return {
+              provider,
+              modelId: model.model_id,
+              modelDbId: model.id,
+              apiKey: decryptedKey,
+              keyId: key.id,
+              platform: model.platform,
+              displayName: model.display_name,
+            };
+          } catch {
+            db.prepare(
+              "UPDATE api_keys SET status = 'error', last_checked_at = datetime('now') WHERE id = ?",
+            ).run(key.id);
+          }
+        }
+      }
+    }
+  }
+
+  // Auto-route: find first enabled model with this capability and an available key
+  const models = db
+    .prepare(
+      "SELECT * FROM models WHERE enabled = 1 AND capabilities LIKE ? ORDER BY intelligence_rank DESC",
+    )
+    .all(`%${capability}%`) as ModelRow[];
+
+  for (const model of models) {
+    const provider = getProvider(model.platform as any);
+    if (!provider || !provider.supportsCapability(capability)) continue;
+
+    const keys = db
+      .prepare(
+        "SELECT * FROM api_keys WHERE platform = ? AND enabled = 1 AND status IN ('healthy', 'unknown')",
+      )
+      .all(model.platform) as KeyRow[];
+
+    for (const key of keys) {
+      try {
+        const decryptedKey = decrypt(key.encrypted_key, key.iv, key.auth_tag);
+        return {
+          provider,
+          modelId: model.model_id,
+          modelDbId: model.id,
+          apiKey: decryptedKey,
+          keyId: key.id,
+          platform: model.platform,
+          displayName: model.display_name,
+        };
+      } catch {
+        db.prepare(
+          "UPDATE api_keys SET status = 'error', last_checked_at = datetime('now') WHERE id = ?",
+        ).run(key.id);
+      }
+    }
+  }
+
+  const err = new Error(
+    `No available models with capability "${capability}". Add API keys for a ${capability}-capable provider.`,
+  ) as any;
+  err.status = 503;
   throw err;
 }

@@ -1,36 +1,46 @@
-import { Router } from 'express';
-import type { Request, Response } from 'express';
-import { getDb } from '../db/index.js';
-import { hasProvider } from '../providers/index.js';
+import { Router } from "express";
+import type { Request, Response } from "express";
+import { getDb } from "../db/index.js";
+import { hasProvider } from "../providers/index.js";
 
 export const modelsRouter = Router();
 
 // List all models with availability info
-modelsRouter.get('/', (_req: Request, res: Response) => {
+modelsRouter.get("/", (_req: Request, res: Response) => {
   const db = getDb();
-  const models = db.prepare(`
+  const models = db
+    .prepare(
+      `
     SELECT m.*, fc.priority, fc.enabled as fallback_enabled
     FROM models m
     LEFT JOIN fallback_config fc ON fc.model_db_id = m.id
     ORDER BY COALESCE(fc.priority, m.intelligence_rank) ASC
-  `).all() as any[];
+  `,
+    )
+    .all() as any[];
 
   // Count keys per platform
-  const keyCounts = db.prepare(`
+  const keyCounts = db
+    .prepare(
+      `
     SELECT platform, COUNT(*) as count
     FROM api_keys
     WHERE enabled = 1
     GROUP BY platform
-  `).all() as { platform: string; count: number }[];
+  `,
+    )
+    .all() as { platform: string; count: number }[];
 
-  const keyCountMap = new Map(keyCounts.map(k => [k.platform, k.count]));
+  const keyCountMap = new Map(keyCounts.map((k) => [k.platform, k.count]));
 
-  const result = models.map(m => ({
+  const result = models.map((m) => ({
     id: m.id,
     platform: m.platform,
     modelId: m.model_id,
     displayName: m.display_name,
     intelligenceRank: m.intelligence_rank,
+    codingRank: m.coding_rank,
+    researchRank: m.research_rank,
     speedRank: m.speed_rank,
     sizeLabel: m.size_label,
     rpmLimit: m.rpm_limit,

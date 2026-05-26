@@ -1,6 +1,6 @@
-import { Router } from 'express';
-import type { Request, Response } from 'express';
-import { getDb } from '../db/index.js';
+import { Router } from "express";
+import type { Request, Response } from "express";
+import { getDb } from "../db/index.js";
 
 export const analyticsRouter = Router();
 
@@ -9,23 +9,34 @@ export const analyticsRouter = Router();
 function getSinceTimestamp(range: string): string {
   const now = Date.now();
   switch (range) {
-    case '24h':
+    case "24h":
       return new Date(now - 24 * 60 * 60 * 1000).toISOString();
-    case '30d':
+    case "30d":
       return new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
-    case '7d':
+    case "7d":
     default:
       return new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
   }
 }
 
+function getSinceFromParams(req: Request): string {
+  const start = req.query.start as string | undefined;
+  const range = (req.query.range as string) ?? "7d";
+  if (start) {
+    const d = new Date(start);
+    if (!isNaN(d.getTime())) return d.toISOString();
+  }
+  return getSinceTimestamp(range);
+}
+
 // Summary stats
-analyticsRouter.get('/summary', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
-  const since = getSinceTimestamp(range);
+analyticsRouter.get("/summary", (req: Request, res: Response) => {
+  const since = getSinceFromParams(req);
   const db = getDb();
 
-  const stats = db.prepare(`
+  const stats = db
+    .prepare(
+      `
     SELECT
       COUNT(*) as total_requests,
       SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
@@ -34,11 +45,15 @@ analyticsRouter.get('/summary', (req: Request, res: Response) => {
       AVG(latency_ms) as avg_latency_ms
     FROM requests
     WHERE created_at >= ?
-  `).get(since) as any;
+  `,
+    )
+    .get(since) as any;
 
   const totalRequests = stats.total_requests ?? 0;
-  const successRate = totalRequests > 0 ? (stats.success_count / totalRequests) * 100 : 0;
-  const totalTokens = (stats.total_input_tokens ?? 0) + (stats.total_output_tokens ?? 0);
+  const successRate =
+    totalRequests > 0 ? (stats.success_count / totalRequests) * 100 : 0;
+  const totalTokens =
+    (stats.total_input_tokens ?? 0) + (stats.total_output_tokens ?? 0);
 
   // Estimate cost savings: average ~$3/M input + $15/M output tokens (GPT-4o pricing)
   const inputCost = ((stats.total_input_tokens ?? 0) / 1_000_000) * 3;
@@ -54,13 +69,21 @@ analyticsRouter.get('/summary', (req: Request, res: Response) => {
   });
 });
 
+// Per-model cost estimate: $3/M input + $15/M output (GPT-4o reference pricing)
+function costEstimate(inputTokens: number, outputTokens: number): number {
+  const inputCost = (inputTokens / 1_000_000) * 3;
+  const outputCost = (outputTokens / 1_000_000) * 15;
+  return Math.round((inputCost + outputCost) * 100) / 100;
+}
+
 // Stats grouped by model
-analyticsRouter.get('/by-model', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
-  const since = getSinceTimestamp(range);
+analyticsRouter.get("/by-model", (req: Request, res: Response) => {
+  const since = getSinceFromParams(req);
   const db = getDb();
 
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT
       r.platform,
       r.model_id,
@@ -75,27 +98,36 @@ analyticsRouter.get('/by-model', (req: Request, res: Response) => {
     WHERE r.created_at >= ?
     GROUP BY r.platform, r.model_id
     ORDER BY requests DESC
-  `).all(since) as any[];
+  `,
+    )
+    .all(since) as any[];
 
-  res.json(rows.map(r => ({
-    platform: r.platform,
-    modelId: r.model_id,
-    displayName: r.display_name ?? r.model_id,
-    requests: r.requests,
-    successRate: Math.round(r.success_rate * 10) / 10,
-    avgLatencyMs: Math.round(r.avg_latency_ms),
-    totalInputTokens: r.total_input_tokens ?? 0,
-    totalOutputTokens: r.total_output_tokens ?? 0,
-  })));
+  res.json(
+    rows.map((r) => ({
+      platform: r.platform,
+      modelId: r.model_id,
+      displayName: r.display_name ?? r.model_id,
+      requests: r.requests,
+      successRate: Math.round(r.success_rate * 10) / 10,
+      avgLatencyMs: Math.round(r.avg_latency_ms),
+      totalInputTokens: r.total_input_tokens ?? 0,
+      totalOutputTokens: r.total_output_tokens ?? 0,
+      estimatedCost: costEstimate(
+        r.total_input_tokens ?? 0,
+        r.total_output_tokens ?? 0,
+      ),
+    })),
+  );
 });
 
 // Stats grouped by platform
-analyticsRouter.get('/by-platform', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
-  const since = getSinceTimestamp(range);
+analyticsRouter.get("/by-platform", (req: Request, res: Response) => {
+  const since = getSinceFromParams(req);
   const db = getDb();
 
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT
       platform,
       COUNT(*) as requests,
@@ -107,29 +139,36 @@ analyticsRouter.get('/by-platform', (req: Request, res: Response) => {
     WHERE created_at >= ?
     GROUP BY platform
     ORDER BY requests DESC
-  `).all(since) as any[];
+  `,
+    )
+    .all(since) as any[];
 
-  res.json(rows.map(r => ({
-    platform: r.platform,
-    requests: r.requests,
-    successRate: Math.round(r.success_rate * 10) / 10,
-    avgLatencyMs: Math.round(r.avg_latency_ms),
-    totalInputTokens: r.total_input_tokens ?? 0,
-    totalOutputTokens: r.total_output_tokens ?? 0,
-  })));
+  res.json(
+    rows.map((r) => ({
+      platform: r.platform,
+      requests: r.requests,
+      successRate: Math.round(r.success_rate * 10) / 10,
+      avgLatencyMs: Math.round(r.avg_latency_ms),
+      totalInputTokens: r.total_input_tokens ?? 0,
+      totalOutputTokens: r.total_output_tokens ?? 0,
+    })),
+  );
 });
 
 // Timeline data
-analyticsRouter.get('/timeline', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
-  const interval = (req.query.interval as string) ?? (range === '24h' ? 'hour' : 'day');
-  const since = getSinceTimestamp(range);
+analyticsRouter.get("/timeline", (req: Request, res: Response) => {
+  const range = (req.query.range as string) ?? "7d";
+  const interval =
+    (req.query.interval as string) ?? (range === "24h" ? "hour" : "day");
+  const since = getSinceFromParams(req);
   const db = getDb();
 
   // dateFormat is a hardcoded whitelist — never user-controlled.
-  const dateFormat = interval === 'hour' ? '%Y-%m-%dT%H:00:00' : '%Y-%m-%d';
+  const dateFormat = interval === "hour" ? "%Y-%m-%dT%H:00:00" : "%Y-%m-%d";
 
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT
       strftime('${dateFormat}', created_at) as timestamp,
       COUNT(*) as requests,
@@ -139,24 +178,29 @@ analyticsRouter.get('/timeline', (req: Request, res: Response) => {
     WHERE created_at >= ?
     GROUP BY strftime('${dateFormat}', created_at)
     ORDER BY timestamp ASC
-  `).all(since) as any[];
+  `,
+    )
+    .all(since) as any[];
 
-  res.json(rows.map(r => ({
-    timestamp: r.timestamp,
-    requests: r.requests,
-    successCount: r.success_count,
-    failureCount: r.failure_count,
-  })));
+  res.json(
+    rows.map((r) => ({
+      timestamp: r.timestamp,
+      requests: r.requests,
+      successCount: r.success_count,
+      failureCount: r.failure_count,
+    })),
+  );
 });
 
 // Error distribution (grouped by error type and platform)
-analyticsRouter.get('/error-distribution', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
-  const since = getSinceTimestamp(range);
+analyticsRouter.get("/error-distribution", (req: Request, res: Response) => {
+  const since = getSinceFromParams(req);
   const db = getDb();
 
   // Group errors by category (extract the key part of the error message)
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT
       platform,
       model_id,
@@ -175,10 +219,14 @@ analyticsRouter.get('/error-distribution', (req: Request, res: Response) => {
     WHERE status = 'error' AND created_at >= ?
     GROUP BY platform, error_category
     ORDER BY count DESC
-  `).all(since) as any[];
+  `,
+    )
+    .all(since) as any[];
 
   // Also get totals by category
-  const byCategory = db.prepare(`
+  const byCategory = db
+    .prepare(
+      `
     SELECT
       CASE
         WHEN error LIKE '%429%' OR error LIKE '%rate limit%' OR error LIKE '%too many%' OR error LIKE '%quota%' THEN 'Rate Limited (429)'
@@ -195,16 +243,22 @@ analyticsRouter.get('/error-distribution', (req: Request, res: Response) => {
     WHERE status = 'error' AND created_at >= ?
     GROUP BY category
     ORDER BY count DESC
-  `).all(since) as any[];
+  `,
+    )
+    .all(since) as any[];
 
   // Errors by platform
-  const byPlatform = db.prepare(`
+  const byPlatform = db
+    .prepare(
+      `
     SELECT platform, COUNT(*) as count
     FROM requests
     WHERE status = 'error' AND created_at >= ?
     GROUP BY platform
     ORDER BY count DESC
-  `).all(since) as any[];
+  `,
+    )
+    .all(since) as any[];
 
   res.json({
     byCategory,
@@ -214,25 +268,30 @@ analyticsRouter.get('/error-distribution', (req: Request, res: Response) => {
 });
 
 // Recent errors
-analyticsRouter.get('/errors', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
-  const since = getSinceTimestamp(range);
+analyticsRouter.get("/errors", (req: Request, res: Response) => {
+  const since = getSinceFromParams(req);
   const db = getDb();
 
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT id, platform, model_id, error, latency_ms, created_at
     FROM requests
     WHERE status = 'error' AND created_at >= ?
     ORDER BY created_at DESC
     LIMIT 50
-  `).all(since) as any[];
+  `,
+    )
+    .all(since) as any[];
 
-  res.json(rows.map(r => ({
-    id: r.id,
-    platform: r.platform,
-    modelId: r.model_id,
-    error: r.error,
-    latencyMs: r.latency_ms,
-    createdAt: r.created_at,
-  })));
+  res.json(
+    rows.map((r) => ({
+      id: r.id,
+      platform: r.platform,
+      modelId: r.model_id,
+      error: r.error,
+      latencyMs: r.latency_ms,
+      createdAt: r.created_at,
+    })),
+  );
 });

@@ -1,5 +1,5 @@
 {
-  "name": "freellmapi",
+  "name": "routezero",
   "private": true,
   "workspaces": [
     "shared",
@@ -10,9 +10,21 @@
     "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w client\"",
     "test": "npm run test -w server && npm run test -w client --if-present",
     "build": "npm run build -w server && npm run build -w client",
-    "build:server": "npm run build -w server"
+    "build:server": "npm run build -w server",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "prettier --write --ignore-unknown"
+    ],
+    "*.{json,md,css}": [
+      "prettier --write --ignore-unknown"
+    ]
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "concurrently": "^9.1.2",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.5",
+    "prettier": "^3.8.3"
   }
 }

@@ -2,9 +2,9 @@ import type {
   ChatMessage,
   ChatCompletionResponse,
   ChatCompletionChunk,
-} from '@freellmapi/shared/types.js';
-import { BaseProvider, type CompletionOptions } from './base.js';
-import { contentToString } from '../lib/content.js';
+} from "@routezero/shared/types.js";
+import { BaseProvider, type CompletionOptions } from "./base.js";
+import { contentToString } from "../lib/content.js";
 
 /**
  * Cloudflare Workers AI provider.
@@ -12,12 +12,15 @@ import { contentToString } from '../lib/content.js';
  * The account_id is extracted from the key to build the URL.
  */
 export class CloudflareProvider extends BaseProvider {
-  readonly platform = 'cloudflare' as const;
-  readonly name = 'Cloudflare Workers AI';
+  readonly platform = "cloudflare" as const;
+  readonly name = "Cloudflare Workers AI";
 
   private parseKey(apiKey: string): { accountId: string; token: string } {
-    const sep = apiKey.indexOf(':');
-    if (sep === -1) throw new Error('Cloudflare key must be in format "account_id:api_token"');
+    const sep = apiKey.indexOf(":");
+    if (sep === -1)
+      throw new Error(
+        'Cloudflare key must be in format "account_id:api_token"',
+      );
     return { accountId: apiKey.slice(0, sep), token: apiKey.slice(sep + 1) };
   }
 
@@ -26,7 +29,7 @@ export class CloudflareProvider extends BaseProvider {
   //     even though the OpenAI spec allows it (collapse to '');
   //   - doesn't accept the array content envelope, so flatten to string.
   private normalizeMessages(messages: ChatMessage[]): ChatMessage[] {
-    return messages.map(m => ({ ...m, content: contentToString(m.content) }));
+    return messages.map((m) => ({ ...m, content: contentToString(m.content) }));
   }
 
   async chatCompletion(
@@ -39,10 +42,10 @@ export class CloudflareProvider extends BaseProvider {
     const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`;
 
     const res = await this.fetchWithTimeout(url, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         model: modelId,
@@ -58,11 +61,13 @@ export class CloudflareProvider extends BaseProvider {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(`Cloudflare API error ${res.status}: ${(err as any).error?.message ?? (err as any).errors?.[0]?.message ?? res.statusText}`);
+      throw new Error(
+        `Cloudflare API error ${res.status}: ${(err as any).error?.message ?? (err as any).errors?.[0]?.message ?? res.statusText}`,
+      );
     }
 
-    const data = await res.json() as ChatCompletionResponse;
-    data._routed_via = { platform: 'cloudflare', model: modelId };
+    const data = (await res.json()) as ChatCompletionResponse;
+    data._routed_via = { platform: "cloudflare", model: modelId };
     return data;
   }
 
@@ -76,10 +81,10 @@ export class CloudflareProvider extends BaseProvider {
     const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`;
 
     const res = await this.fetchWithTimeout(url, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         model: modelId,
@@ -96,28 +101,30 @@ export class CloudflareProvider extends BaseProvider {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(`Cloudflare API error ${res.status}: ${(err as any).error?.message ?? (err as any).errors?.[0]?.message ?? res.statusText}`);
+      throw new Error(
+        `Cloudflare API error ${res.status}: ${(err as any).error?.message ?? (err as any).errors?.[0]?.message ?? res.statusText}`,
+      );
     }
 
     const reader = res.body?.getReader();
-    if (!reader) throw new Error('No response body');
+    if (!reader) throw new Error("No response body");
 
     const decoder = new TextDecoder();
-    let buffer = '';
+    let buffer = "";
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
 
       for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+        if (!trimmed || !trimmed.startsWith("data: ")) continue;
         const data = trimmed.slice(6);
-        if (data === '[DONE]') return;
+        if (data === "[DONE]") return;
         try {
           yield JSON.parse(data) as ChatCompletionChunk;
         } catch {
@@ -132,13 +139,13 @@ export class CloudflareProvider extends BaseProvider {
     // counting toward auto-disable. Only confirmed bad/inactive tokens disable.
     const { token } = this.parseKey(apiKey);
     const res = await this.fetchWithTimeout(
-      'https://api.cloudflare.com/client/v4/user/tokens/verify',
-      { method: 'GET', headers: { 'Authorization': `Bearer ${token}` } },
+      "https://api.cloudflare.com/client/v4/user/tokens/verify",
+      { method: "GET", headers: { Authorization: `Bearer ${token}` } },
       10000,
     );
     if (res.status === 401 || res.status === 403) return false;
     if (!res.ok) return true; // unexpected non-2xx that isn't auth — don't disable
-    const data = await res.json() as any;
-    return data.success === true && data.result?.status === 'active';
+    const data = (await res.json()) as any;
+    return data.success === true && data.result?.status === "active";
   }
 }

@@ -6,22 +6,23 @@
 // (see server/src/db/index.ts). HuggingFace was dropped in V4 and re-added
 // in V13 via the router.huggingface.co Inference Providers meta-router.
 export type Platform =
-  | 'google'
-  | 'groq'
-  | 'cerebras'
-  | 'sambanova'
-  | 'nvidia'
-  | 'mistral'
-  | 'openrouter'
-  | 'github'
-  | 'cohere'
-  | 'cloudflare'
-  | 'zhipu'
-  | 'ollama'
-  | 'kilo'
-  | 'pollinations'
-  | 'llm7'
-  | 'huggingface';
+  | "google"
+  | "groq"
+  | "cerebras"
+  | "sambanova"
+  | "nvidia"
+  | "mistral"
+  | "openrouter"
+  | "github"
+  | "cohere"
+  | "cloudflare"
+  | "zhipu"
+  | "ollama"
+  | "kilo"
+  | "pollinations"
+  | "llm7"
+  | "huggingface"
+  | "opencode";
 
 export interface Model {
   id: number;
@@ -40,7 +41,12 @@ export interface Model {
   enabled: boolean;
 }
 
-export type KeyStatus = 'healthy' | 'rate_limited' | 'invalid' | 'error' | 'unknown';
+export type KeyStatus =
+  | "healthy"
+  | "rate_limited"
+  | "invalid"
+  | "error"
+  | "unknown";
 
 export interface ApiKey {
   id: number;
@@ -80,7 +86,7 @@ export interface ChatToolCallFunction {
 
 export interface ChatToolCall {
   id: string;
-  type: 'function';
+  type: "function";
   function: ChatToolCallFunction;
   thought_signature?: string;
 }
@@ -93,30 +99,34 @@ export interface ChatToolFunctionDefinition {
 }
 
 export interface ChatToolDefinition {
-  type: 'function';
+  type: "function";
   function: ChatToolFunctionDefinition;
 }
 
 export type ChatToolChoice =
-  | 'none'
-  | 'auto'
-  | 'required'
+  | "none"
+  | "auto"
+  | "required"
   | {
-    type: 'function';
-    function: {
-      name: string;
+      type: "function";
+      function: {
+        name: string;
+      };
     };
-  };
 
 // OpenAI's multimodal envelope: clients like opencode / continue.dev send
 // content as an array of typed blocks even for text-only messages. We accept
 // it on the wire and flatten to string for providers that don't support it
 // (Cohere, Cloudflare). See server/src/lib/content.ts.
-export type ChatContentBlock = { type: string; text?: string; [key: string]: unknown };
+export type ChatContentBlock = {
+  type: string;
+  text?: string;
+  [key: string]: unknown;
+};
 export type ChatContent = string | null | ChatContentBlock[];
 
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
+  role: "system" | "user" | "assistant" | "tool";
   content: ChatContent;
   name?: string;
   tool_call_id?: string;
@@ -149,7 +159,7 @@ export interface TokenUsage {
 
 export interface ChatCompletionResponse {
   id: string;
-  object: 'chat.completion';
+  object: "chat.completion";
   created: number;
   model: string;
   choices: ChatCompletionChoice[];
@@ -162,13 +172,13 @@ export interface ChatCompletionResponse {
 
 export interface ChatCompletionChunk {
   id: string;
-  object: 'chat.completion.chunk';
+  object: "chat.completion.chunk";
   created: number;
   model: string;
   choices: {
     index: number;
     delta: {
-      role?: 'assistant';
+      role?: "assistant";
       content?: string;
       tool_calls?: ChatToolCall[];
     };
@@ -207,7 +217,7 @@ export interface RequestLog {
   id: number;
   platform: Platform;
   modelId: string;
-  status: 'success' | 'error';
+  status: "success" | "error";
   inputTokens: number;
   outputTokens: number;
   latencyMs: number;

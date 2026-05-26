@@ -3,8 +3,20 @@ import type {
   ChatCompletionResponse,
   ChatCompletionChunk,
   Platform,
-} from '@freellmapi/shared/types.js';
-import { BaseProvider, type CompletionOptions } from './base.js';
+} from "@routezero/shared/types.js";
+import {
+  BaseProvider,
+  type CompletionOptions,
+  type ImageOptions,
+  type ImageResponse,
+  type EmbeddingResponse,
+} from "./base.js";
+
+/** Providers that have image generation support via OpenAI-compat /v1/images/generations */
+const IMAGE_GEN_PROVIDERS = new Set(["openrouter", "kilo"]);
+
+/** Providers that have embedding support via OpenAI-compat /v1/embeddings */
+const EMBEDDING_PROVIDERS = new Set(["openrouter"]);
 
 /**
  * Generic provider for platforms that use an OpenAI-compatible API.
@@ -44,31 +56,37 @@ export class OpenAICompatProvider extends BaseProvider {
     modelId: string,
     options?: CompletionOptions,
   ): Promise<ChatCompletionResponse> {
-    const res = await this.fetchWithTimeout(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        ...this.extraHeaders,
+    const res = await this.fetchWithTimeout(
+      `${this.baseUrl}/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          ...this.extraHeaders,
+        },
+        body: JSON.stringify({
+          model: modelId,
+          messages,
+          temperature: options?.temperature,
+          max_tokens: options?.max_tokens,
+          top_p: options?.top_p,
+          tools: options?.tools,
+          tool_choice: options?.tool_choice,
+          parallel_tool_calls: options?.parallel_tool_calls,
+        }),
       },
-      body: JSON.stringify({
-        model: modelId,
-        messages,
-        temperature: options?.temperature,
-        max_tokens: options?.max_tokens,
-        top_p: options?.top_p,
-        tools: options?.tools,
-        tool_choice: options?.tool_choice,
-        parallel_tool_calls: options?.parallel_tool_calls,
-      }),
-    }, this.timeoutMs);
+      this.timeoutMs,
+    );
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(`${this.name} API error ${res.status}: ${(err as any).error?.message ?? res.statusText}`);
+      throw new Error(
+        `${this.name} API error ${res.status}: ${(err as any).error?.message ?? res.statusText}`,
+      );
     }
 
-    const data = await res.json() as ChatCompletionResponse;
+    const data = (await res.json()) as ChatCompletionResponse;
     normalizeChoices(data);
     data._routed_via = { platform: this.platform, model: modelId };
     return data;
@@ -80,50 +98,56 @@ export class OpenAICompatProvider extends BaseProvider {
     modelId: string,
     options?: CompletionOptions,
   ): AsyncGenerator<ChatCompletionChunk> {
-    const res = await this.fetchWithTimeout(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        ...this.extraHeaders,
+    const res = await this.fetchWithTimeout(
+      `${this.baseUrl}/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          ...this.extraHeaders,
+        },
+        body: JSON.stringify({
+          model: modelId,
+          messages,
+          temperature: options?.temperature,
+          max_tokens: options?.max_tokens,
+          top_p: options?.top_p,
+          tools: options?.tools,
+          tool_choice: options?.tool_choice,
+          parallel_tool_calls: options?.parallel_tool_calls,
+          stream: true,
+        }),
       },
-      body: JSON.stringify({
-        model: modelId,
-        messages,
-        temperature: options?.temperature,
-        max_tokens: options?.max_tokens,
-        top_p: options?.top_p,
-        tools: options?.tools,
-        tool_choice: options?.tool_choice,
-        parallel_tool_calls: options?.parallel_tool_calls,
-        stream: true,
-      }),
-    }, this.timeoutMs);
+      this.timeoutMs,
+    );
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(`${this.name} API error ${res.status}: ${(err as any).error?.message ?? res.statusText}`);
+      throw new Error(
+        `${this.name} API error ${res.status}: ${(err as any).error?.message ?? res.statusText}`,
+      );
     }
 
     const reader = res.body?.getReader();
-    if (!reader) throw new Error('No response body');
+    if (!reader) throw new Error("No response body");
 
     const decoder = new TextDecoder();
-    let buffer = '';
+    let buffer = "";
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
 
       for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+        if (!trimmed || !trimmed.startsWith("data: ")) continue;
         const data = trimmed.slice(6);
-        if (data === '[DONE]') return;
+        if (data === "[DONE]") return;
         try {
           yield JSON.parse(data) as ChatCompletionChunk;
         } catch {
@@ -138,14 +162,90 @@ export class OpenAICompatProvider extends BaseProvider {
     // health.ts catches them and marks status='error' WITHOUT incrementing
     // the consecutive-failure counter — only confirmed 401/403 disables a key.
     const url = this.validateUrl ?? `${this.baseUrl}/models`;
-    const res = await this.fetchWithTimeout(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        ...this.extraHeaders,
+    const res = await this.fetchWithTimeout(
+      url,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          ...this.extraHeaders,
+        },
       },
-    }, 10000);
+      10000,
+    );
     return res.status !== 401 && res.status !== 403;
+  }
+
+  async generateImage(
+    apiKey: string,
+    prompt: string,
+    options?: ImageOptions,
+  ): Promise<ImageResponse> {
+    const res = await this.fetchWithTimeout(
+      `${this.baseUrl}/images/generations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          ...this.extraHeaders,
+        },
+        body: JSON.stringify({
+          model: options?.model,
+          prompt,
+          n: options?.n ?? 1,
+          size: options?.size,
+          response_format: options?.response_format,
+        }),
+      },
+      this.timeoutMs,
+    );
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(
+        `${this.name} image gen error ${res.status}: ${(err as any).error?.message ?? res.statusText}`,
+      );
+    }
+
+    return res.json() as Promise<ImageResponse>;
+  }
+
+  async createEmbeddings(
+    apiKey: string,
+    input: string | string[],
+    modelId: string,
+  ): Promise<EmbeddingResponse> {
+    const res = await this.fetchWithTimeout(
+      `${this.baseUrl}/embeddings`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          ...this.extraHeaders,
+        },
+        body: JSON.stringify({ model: modelId, input }),
+      },
+      this.timeoutMs,
+    );
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(
+        `${this.name} embeddings error ${res.status}: ${(err as any).error?.message ?? res.statusText}`,
+      );
+    }
+
+    return res.json() as Promise<EmbeddingResponse>;
+  }
+
+  supportsCapability(capability: string): boolean {
+    if (capability === "image_gen")
+      return IMAGE_GEN_PROVIDERS.has(this.platform);
+    if (capability === "embeddings")
+      return EMBEDDING_PROVIDERS.has(this.platform);
+    return false;
   }
 }
 
@@ -168,19 +268,24 @@ function normalizeChoices(data: ChatCompletionResponse): void {
     // Flatten array content (Mistral magistral) → join text segments.
     if (Array.isArray(msg.content)) {
       msg.content = (msg.content as Array<{ text?: string; type?: string }>)
-        .map(seg => (typeof seg === 'string' ? seg : (seg.text ?? '')))
-        .join('');
+        .map((seg) => (typeof seg === "string" ? seg : (seg.text ?? "")))
+        .join("");
     }
     // Fold reasoning into content if content is empty AND there are no
     // tool_calls. With tool_calls present, content=null is the correct OpenAI
     // shape; folding reasoning would confuse clients that branch on content.
     // Field naming varies by provider: Z.ai uses `reasoning_content`, Ollama
     // uses `reasoning`. Prefer `reasoning_content` when both are set.
-    const hasToolCalls = Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0;
-    if (!hasToolCalls && (msg.content === '' || msg.content == null)) {
-      const fold = (typeof msg.reasoning_content === 'string' && msg.reasoning_content.length > 0)
-        ? msg.reasoning_content
-        : (typeof msg.reasoning === 'string' && msg.reasoning.length > 0 ? msg.reasoning : null);
+    const hasToolCalls =
+      Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0;
+    if (!hasToolCalls && (msg.content === "" || msg.content == null)) {
+      const fold =
+        typeof msg.reasoning_content === "string" &&
+        msg.reasoning_content.length > 0
+          ? msg.reasoning_content
+          : typeof msg.reasoning === "string" && msg.reasoning.length > 0
+            ? msg.reasoning
+            : null;
       if (fold !== null) msg.content = fold;
     }
   }

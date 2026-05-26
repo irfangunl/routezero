@@ -1,8 +1,9 @@
-import { Router } from 'express';
-import type { Request, Response } from 'express';
-import { z } from 'zod';
-import { getDb } from '../db/index.js';
-import { encrypt, decrypt, maskKey } from '../lib/crypto.js';
+import { Router } from "express";
+import type { Request, Response } from "express";
+import { z } from "zod";
+import { getDb } from "../db/index.js";
+import { encrypt, decrypt, maskKey } from "../lib/crypto.js";
+import { checkAllKeys } from "../services/health.js";
 
 export const keysRouter = Router();
 
@@ -10,9 +11,23 @@ export const keysRouter = Router();
 // Moonshot and MiniMax direct integrations were dropped in V4. HuggingFace
 // was dropped in V4 and re-added in V13 via the router.huggingface.co route.
 const PLATFORMS = [
-  'google', 'groq', 'cerebras', 'sambanova', 'nvidia', 'mistral',
-  'openrouter', 'github', 'cohere', 'cloudflare', 'zhipu', 'ollama',
-  'kilo', 'pollinations', 'llm7', 'huggingface',
+  "google",
+  "groq",
+  "cerebras",
+  "sambanova",
+  "nvidia",
+  "mistral",
+  "openrouter",
+  "github",
+  "cohere",
+  "cloudflare",
+  "zhipu",
+  "ollama",
+  "kilo",
+  "pollinations",
+  "llm7",
+  "huggingface",
+  "opencode",
 ] as const;
 
 const addKeySchema = z.object({
@@ -22,17 +37,19 @@ const addKeySchema = z.object({
 });
 
 // List all keys (masked)
-keysRouter.get('/', (_req: Request, res: Response) => {
+keysRouter.get("/", (_req: Request, res: Response) => {
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM api_keys ORDER BY created_at DESC').all() as any[];
+  const rows = db
+    .prepare("SELECT * FROM api_keys ORDER BY created_at DESC")
+    .all() as any[];
 
-  const keys = rows.map(row => {
-    let maskedKey = '****';
+  const keys = rows.map((row) => {
+    let maskedKey = "****";
     try {
       const realKey = decrypt(row.encrypted_key, row.iv, row.auth_tag);
       maskedKey = maskKey(realKey);
     } catch {
-      maskedKey = '[decrypt failed]';
+      maskedKey = "[decrypt failed]";
     }
     return {
       id: row.id,
@@ -50,10 +67,16 @@ keysRouter.get('/', (_req: Request, res: Response) => {
 });
 
 // Add a key
-keysRouter.post('/', (req: Request, res: Response) => {
+keysRouter.post("/", (req: Request, res: Response) => {
   const parsed = addKeySchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: { message: parsed.error.errors.map(e => e.message).join(', ') } });
+    res
+      .status(400)
+      .json({
+        error: {
+          message: parsed.error.errors.map((e) => e.message).join(", "),
+        },
+      });
     return;
   }
 
@@ -61,34 +84,38 @@ keysRouter.post('/', (req: Request, res: Response) => {
   const { encrypted, iv, authTag } = encrypt(key);
 
   const db = getDb();
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled)
     VALUES (?, ?, ?, ?, ?, 'unknown', 1)
-  `).run(platform, label ?? '', encrypted, iv, authTag);
+  `,
+    )
+    .run(platform, label ?? "", encrypted, iv, authTag);
 
   res.status(201).json({
     id: result.lastInsertRowid,
     platform,
-    label: label ?? '',
+    label: label ?? "",
     maskedKey: maskKey(key),
-    status: 'unknown',
+    status: "unknown",
     enabled: true,
   });
 });
 
 // Delete a key
-keysRouter.delete('/:id', (req: Request, res: Response) => {
+keysRouter.delete("/:id", (req: Request, res: Response) => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) {
-    res.status(400).json({ error: { message: 'Invalid key ID' } });
+    res.status(400).json({ error: { message: "Invalid key ID" } });
     return;
   }
 
   const db = getDb();
-  const result = db.prepare('DELETE FROM api_keys WHERE id = ?').run(id);
+  const result = db.prepare("DELETE FROM api_keys WHERE id = ?").run(id);
 
   if (result.changes === 0) {
-    res.status(404).json({ error: { message: 'Key not found' } });
+    res.status(404).json({ error: { message: "Key not found" } });
     return;
   }
 
@@ -96,44 +123,56 @@ keysRouter.delete('/:id', (req: Request, res: Response) => {
 });
 
 // Toggle all keys for a platform
-keysRouter.patch('/platform/:platform', (req: Request, res: Response) => {
+keysRouter.patch("/platform/:platform", (req: Request, res: Response) => {
   const platform = req.params.platform as string;
   if (!(PLATFORMS as readonly string[]).includes(platform)) {
-    res.status(400).json({ error: { message: `Invalid platform '${platform}'` } });
+    res
+      .status(400)
+      .json({ error: { message: `Invalid platform '${platform}'` } });
     return;
   }
 
   const { enabled } = req.body;
-  if (typeof enabled !== 'boolean') {
-    res.status(400).json({ error: { message: 'enabled must be a boolean' } });
+  if (typeof enabled !== "boolean") {
+    res.status(400).json({ error: { message: "enabled must be a boolean" } });
     return;
   }
 
   const db = getDb();
-  const result = db.prepare('UPDATE api_keys SET enabled = ? WHERE platform = ?').run(enabled ? 1 : 0, platform);
+  const result = db
+    .prepare("UPDATE api_keys SET enabled = ? WHERE platform = ?")
+    .run(enabled ? 1 : 0, platform);
 
   res.json({ success: true, enabled, updatedKeys: result.changes });
 });
 
+// Validate all keys (batch health check)
+keysRouter.post("/validate-all", async (_req: Request, res: Response) => {
+  await checkAllKeys();
+  res.json({ success: true });
+});
+
 // Toggle enable/disable
-keysRouter.patch('/:id', (req: Request, res: Response) => {
+keysRouter.patch("/:id", (req: Request, res: Response) => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) {
-    res.status(400).json({ error: { message: 'Invalid key ID' } });
+    res.status(400).json({ error: { message: "Invalid key ID" } });
     return;
   }
 
   const { enabled } = req.body;
-  if (typeof enabled !== 'boolean') {
-    res.status(400).json({ error: { message: 'enabled must be a boolean' } });
+  if (typeof enabled !== "boolean") {
+    res.status(400).json({ error: { message: "enabled must be a boolean" } });
     return;
   }
 
   const db = getDb();
-  const result = db.prepare('UPDATE api_keys SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id);
+  const result = db
+    .prepare("UPDATE api_keys SET enabled = ? WHERE id = ?")
+    .run(enabled ? 1 : 0, id);
 
   if (result.changes === 0) {
-    res.status(404).json({ error: { message: 'Key not found' } });
+    res.status(404).json({ error: { message: "Key not found" } });
     return;
   }
 

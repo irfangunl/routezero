@@ -5,7 +5,7 @@ import type {
   ChatToolDefinition,
   ChatToolChoice,
   Platform,
-} from '@freellmapi/shared/types.js';
+} from "@routezero/shared/types.js";
 
 export interface CompletionOptions {
   model?: string;
@@ -15,6 +15,24 @@ export interface CompletionOptions {
   tools?: ChatToolDefinition[];
   tool_choice?: ChatToolChoice;
   parallel_tool_calls?: boolean;
+}
+
+export interface ImageOptions {
+  model?: string;
+  n?: number;
+  size?: string;
+  response_format?: "url" | "b64_json";
+}
+
+export interface ImageResponse {
+  created: number;
+  data: { url?: string; b64_json?: string }[];
+}
+
+export interface EmbeddingResponse {
+  model: string;
+  data: { index: number; embedding: number[] }[];
+  usage: { prompt_tokens: number; total_tokens: number };
 }
 
 export abstract class BaseProvider {
@@ -36,6 +54,29 @@ export abstract class BaseProvider {
   ): AsyncGenerator<ChatCompletionChunk>;
 
   abstract validateKey(apiKey: string): Promise<boolean>;
+
+  /** Generate images from a text prompt. Throws by default if not supported. */
+  async generateImage(
+    _apiKey: string,
+    _prompt: string,
+    _options?: ImageOptions,
+  ): Promise<ImageResponse> {
+    throw new Error(`${this.platform} does not support image generation`);
+  }
+
+  /** Create embeddings. Throws by default if not supported. */
+  async createEmbeddings(
+    _apiKey: string,
+    _input: string | string[],
+    _modelId: string,
+  ): Promise<EmbeddingResponse> {
+    throw new Error(`${this.platform} does not support embeddings`);
+  }
+
+  /** Check if this provider supports a capability (vision, image_gen, embeddings, audio). */
+  supportsCapability(_capability: string): boolean {
+    return false;
+  }
 
   protected async fetchWithTimeout(
     url: string,

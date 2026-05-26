@@ -2,15 +2,15 @@ import type {
   ChatMessage,
   ChatCompletionResponse,
   ChatCompletionChunk,
-} from '@freellmapi/shared/types.js';
-import { BaseProvider, type CompletionOptions } from './base.js';
-import { flattenMessageContent } from '../lib/content.js';
+} from "@routezero/shared/types.js";
+import { BaseProvider, type CompletionOptions } from "./base.js";
+import { flattenMessageContent } from "../lib/content.js";
 
-const API_BASE = 'https://api.cohere.ai/compatibility/v1';
+const API_BASE = "https://api.cohere.ai/compatibility/v1";
 
 export class CohereProvider extends BaseProvider {
-  readonly platform = 'cohere' as const;
-  readonly name = 'Cohere';
+  readonly platform = "cohere" as const;
+  readonly name = "Cohere";
 
   async chatCompletion(
     apiKey: string,
@@ -29,21 +29,23 @@ export class CohereProvider extends BaseProvider {
     };
 
     const res = await this.fetchWithTimeout(`${API_BASE}/chat/completions`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
     });
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(`Cohere API error ${res.status}: ${(err as any).error?.message ?? res.statusText}`);
+      throw new Error(
+        `Cohere API error ${res.status}: ${(err as any).error?.message ?? res.statusText}`,
+      );
     }
 
-    const data = await res.json() as ChatCompletionResponse;
-    data._routed_via = { platform: 'cohere', model: modelId };
+    const data = (await res.json()) as ChatCompletionResponse;
+    data._routed_via = { platform: "cohere", model: modelId };
     return data;
   }
 
@@ -65,38 +67,40 @@ export class CohereProvider extends BaseProvider {
     };
 
     const res = await this.fetchWithTimeout(`${API_BASE}/chat/completions`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
     });
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(`Cohere API error ${res.status}: ${(err as any).error?.message ?? res.statusText}`);
+      throw new Error(
+        `Cohere API error ${res.status}: ${(err as any).error?.message ?? res.statusText}`,
+      );
     }
 
     const reader = res.body?.getReader();
-    if (!reader) throw new Error('No response body');
+    if (!reader) throw new Error("No response body");
 
     const decoder = new TextDecoder();
-    let buffer = '';
+    let buffer = "";
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
 
       for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+        if (!trimmed || !trimmed.startsWith("data: ")) continue;
         const data = trimmed.slice(6);
-        if (data === '[DONE]') return;
+        if (data === "[DONE]") return;
         try {
           yield JSON.parse(data) as ChatCompletionChunk;
         } catch {
@@ -109,10 +113,14 @@ export class CohereProvider extends BaseProvider {
   async validateKey(apiKey: string): Promise<boolean> {
     // Transport errors propagate — health.ts marks status='error' without
     // counting toward auto-disable. Only confirmed 401/403 disables a key.
-    const res = await this.fetchWithTimeout(`${API_BASE}/models`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${apiKey}` },
-    }, 10000);
+    const res = await this.fetchWithTimeout(
+      `${API_BASE}/models`,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${apiKey}` },
+      },
+      10000,
+    );
     return res.status !== 401 && res.status !== 403;
   }
 }
